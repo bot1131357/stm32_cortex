@@ -23,9 +23,27 @@ I must confess, the last time I really got my hands dirty with STM32 was 2013. L
 
 Admittedly, this isn't a tutorial. Just a place to jot down notes so that I can retrace my steps. So don't expect properly stuctured codes. Yea, I'm sloppy like that. 
 
+#### Here's the plan
+
+```
+___________
+|          |
+|          |
+|      VCC====----5V 
+|     TRIG====----PA3 (GPIO_Output)
+|     ECHO====----PA2 (EXTI2 GPIO_MODE_IT_RISING_FALLING)
+|      GND====----GND
+|          |
+|          |
+------------
+```
+
+When the ECHO pin goes on high, a timer will start counting until the pin falls to low again. The number of counts will be used to calculate the distance.
+
+
 #### 10&micro;s pulse 
 To generate the pulse, I could make waste time with NOPs. Here's an microsecond delay routine in assembly I've copied from [STM32 tutorial](https://www.carminenoviello.com/2015/09/04/precisely-measure-microseconds-stm32/) :
-```
+```C++
 #define delayUS_ASM(us) do {\
 	asm volatile (	"MOV R0,%[loops]\n\t"\
 			"1: \n\t"\
@@ -45,7 +63,7 @@ The 10&micro;s pulse is probably just the shortest pulse allowed to trigger the 
 #### External interrupt
 On Echo's rising edge, TIM3->CNT is restarted and timer is started, and then stopped on falling edge.
 
-```
+```C++
 void EXTI2_3_IRQHandler(void)
 {
 	if (HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_2))
@@ -65,7 +83,7 @@ void EXTI2_3_IRQHandler(void)
 #### Utility functions
 Some functions that I used : 
 
-```
+```C++
 void sonarPing(); 		// start blasting sonar wave
 void sonarBegin(); 		// when rise is detected, let the counter run
 void sonarEnd(); 		// when the fall is detected, stop the counter and calculate distance
@@ -73,7 +91,7 @@ void sonarTimeout(); 	// called when timeout happens
 ```
 
 Source file:
-```
+```C++
 #include <stdbool.h>
 uint32_t ticks=0;
 float distance=0;
@@ -156,14 +174,10 @@ Unfortunately, HC-SR04 doesn't ever time out on its own, and it would remain hig
 
 ![Source: www](https://github.com/bot1131357/stm32_cortex/blob/master/img/high.jpg "I'm so high...")
 
-What can you do about this? I suppose you could reset the HC-SR04: have the GND pin connected to an NPN transistor switched by the BP. Let me know if that works for you. 
+What can you do about this? I suppose you could implement a timeout, using TIM3 update interrupt, then reset the HC-SR04 by having the GND pin connected to an NPN transistor switched by the BP. Let me know if that works for you. Because I doubt I'll write anymore in a long time.
 
 Until the day where my life depends on the reliability of this sonar system, I'm perfectly contented assuming that the echo will always return. Doubt that day will ever come, but never say never. ;-)
  
-My plan is to rely on TIM3 to generate the update interrupt. 
-
-	HAL_TIM_Base_Start_IT(&htim3);
-	HAL_TIM_Base_Stop_IT(&htim3);
 
 
 
