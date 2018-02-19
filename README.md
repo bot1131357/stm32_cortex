@@ -13,7 +13,7 @@ The Micro-USB jack on board seems to only provide power, so you will need to hav
 The HC-SR04 is a sonar sensor module, which was really widespread in the Arduino community for robots or cars that need to detect walls or obstacles. I have one lying around, so I decided to see if I can get it working with my BP. This module is really easy to use, and I'm sure there are throngs of tutorials out there already, but this is MY REPOSITORY. In any case, I'll be brief.
 HC-SR04 has 4 pins, VCC, Trig, Echo, and GND. You can probably guess what they do. To fire the sonic burst wave, you need to supply a 10&micro;s TTL signal to the Trig pin. When the burst is fired, the Echo pin goes high and returns to low once the echo of the burst is detected.
 
-![Source: www](https://https://github.com/bot1131357/stm32_cortex/raw/master/img/HCSR04_timing_diagram.png "Timing diagram for HC-SR04")
+![Source: www](https://github.com/bot1131357/stm32_cortex/blob/master/img/HCSR04_timing_diagram.png "Timing diagram for HC-SR04")
 
 #### 3.3V and 5V tolerance
 In case you were wondering, the STM32F030F4 datasheet mentions that the I/Os are 5V tolerant, so we don't have to worry too much when reading the echo signal from the 5V TTL HC-SR04. I decided to play safe so I connected a 2k7 resistor anyway. No harm done. As for triggering HC-SR04, is the voltage level of STM32F030F4P6 sufficient? Turns out it is. At V<sub>DD</sub>=3.3V, the minimum output voltage level would be about 2.3V which is still safely higher than TTL's V<sub>IH</sub> of 2V. So we're good to go.
@@ -48,30 +48,118 @@ On Echo's rising edge, TIM3->CNT is restarted and timer is started, and then sto
 ```
 void EXTI2_3_IRQHandler(void)
 {
-  /* USER CODE BEGIN EXTI2_3_IRQn 0 */
-
 	if (HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_2))
 	{
+		// on rising edge
 		sonarBegin();
 	}
 	else
 	{
+		// on falling edge
 		sonarEnd();
 	}
-  /* USER CODE END EXTI2_3_IRQn 0 */
-  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_2);
-  /* USER CODE BEGIN EXTI2_3_IRQn 1 */
-
-  /* USER CODE END EXTI2_3_IRQn 1 */
+	HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_2);
 }
 ```
+
+#### Utility functions
+Some functions that I used : 
+
+```
+void sonarPing(); 		// start blasting sonar wave
+void sonarBegin(); 		// when rise is detected, let the counter run
+void sonarEnd(); 		// when the fall is detected, stop the counter and calculate distance
+void sonarTimeout(); 	// called when timeout happens
+```
+
+Source file:
+```
+#include <stdbool.h>
+uint32_t ticks=0;
+float distance=0;
+
+bool timeout=false;
+
+void calculateDistance()
+{
+	ticks = TIM3->CNT;
+	distance = 343*ticks / 2e6 / 2;
+}
+
+#define delayUS_ASM(us) do {\
+	asm volatile (	"MOV R0,%[loops]\n\t"\
+			"1: \n\t"\
+			"SUB R0, #1\n\t"\
+			"CMP R0, #0\n\t"\
+			"BNE 1b \n\t" : : [loops] "r" (16*us) : "memory"\
+		      );\
+} while(0)
+
+
+void sendPulse()
+{
+	HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_SET);
+//	delayUS_ASM(1);
+	HAL_Delay(1);
+	HAL_GPIO_WritePin(GPIOA,GPIO_PIN_3,GPIO_PIN_RESET);
+
+}
+void setPWM()
+{
+	TIM14->ARR = ticks >> 4;
+}
+
+void sonarPing()
+{
+	sendPulse();
+}
+void sonarBegin()
+{
+	HAL_TIM_Base_Start_IT(&htim3);
+	TIM3->CNT = 0;
+}
+void sonarEnd()
+{
+	volatile int test = GPIOA->IDR & GPIO_PIN_2;
+	HAL_TIM_Base_Stop_IT(&htim3);
+	if(!timeout)
+	{
+		calculateDistance();
+	//	setPWM();
+	}
+	else
+	{
+		distance = 0.123456789;
+	}
+	timeout=false;
+}
+
+void sonarTimeout()
+{
+	volatile int test = GPIOA->IDR & GPIO_PIN_2;
+	volatile int test2 = TIM3->CNT;
+	timeout=true;
+	// if over 30 ms
+	HAL_TIM_Base_Stop_IT(&htim3);
+	TIM3->CNT = 0;
+}
+```
+
+
 
 #### Timeout
 As I've mentioned earlier, the Echo pin goes to high and returns to low once the echo of the burst is detected. But what if the echo wasn't detected? 
 
-![Source: www](https://https://github.com/bot1131357/stm32_cortex/raw/master/img/sonar_no_echo.png "Timing diagram for HC-SR04")
+![Source: www](https://github.com/bot1131357/stm32_cortex/blob/master/img/sonar_no_echo.png "Timing diagram for HC-SR04")
 
-Unfortunately, HC-SR04 doesn't ever time out on its own, and it would remain high. ![Source: www](https://https://github.com/bot1131357/stm32_cortex/raw/master/img/high.jpg "I'm so high...")
+Unfortunately, HC-SR04 doesn't ever time out on its own, and it would remain high. 
+
+![Source: www](https://github.com/bot1131357/stm32_cortex/blob/master/img/high.jpg "I'm so high...")
+
+What can you do about this? I suppose you could reset the HC-SR04: have the GND pin connected to an NPN transistor switched by the BP. Let me know if that works for you. 
+
+Until the day where my life depends on the reliability of this sonar system, I'm perfectly contented assuming that the echo will always return. Doubt that day will ever come, but never say never. ;-)
+ 
 My plan is to rely on TIM3 to generate the update interrupt. 
 
 	HAL_TIM_Base_Start_IT(&htim3);
